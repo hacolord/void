@@ -1,1 +1,105 @@
-uhh
+return function(Window, Context)
+    local voidWidget = Context.voidWidget
+    local kbWidget = Context.kbWidget
+    local updateAttachment = Context.updateAttachment
+
+    local OneShotTab = Window:CreateTab("One Shot", 4483362458)
+
+    OneShotTab:CreateSection("Checkers")
+    OneShotTab:CreateButton({
+        Name = "Check Void",
+        Callback = function()
+            Context.recordedVoidY = Context.trackedVoidY
+        end,
+    })
+    OneShotTab:CreateButton({
+        Name = "Check Kill Bricks",
+        Callback = function()
+            Context.killBricksList = {}
+            for _, part in ipairs(workspace:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    local name = string.lower(part.Name)
+                    local isKB = false
+                    if string.find(name, "kill") or string.find(name, "lava") or string.find(name, "damage") then isKB = true
+                    else
+                        for _, child in ipairs(part:GetChildren()) do
+                            if child:IsA("TouchTransmitter") or (child:IsA("Script") and string.find(string.lower(child.Name), "kill")) then
+                                isKB = true; break
+                            end
+                        end
+                    end
+                    if isKB then
+                        table.insert(Context.killBricksList, part)
+                    end
+                end
+            end
+        end,
+    })
+
+    Context.InputStudsUI = OneShotTab:CreateInput({
+        Name = "Khoảng cách Stud (Y Offset)",
+        PlaceholderText = "Nhập số...",
+        RemoveTextAfterFocusLost = false,
+        Callback = function(Text)
+            local val = tonumber(Text)
+            if val then
+                Context.studOffset = val
+                updateAttachment()
+            end
+        end,
+    })
+
+    Context.InputTimeUI = OneShotTab:CreateInput({
+        Name = "Thời gian Attach (giây, 0 = vĩnh viễn)",
+        PlaceholderText = "Ví dụ: 1",
+        RemoveTextAfterFocusLost = false,
+        Callback = function(Text)
+            local val = tonumber(Text)
+            if val then
+                Context.attachDuration = val
+            end
+        end,
+    })
+
+    OneShotTab:CreateSection("-Phía")
+    Context.DropNgangUI = OneShotTab:CreateDropdown({
+        Name = "Vị trí Ngang",
+        Options = {"Trước", "Phải", "Sau", "Trái", "Hủy"},
+        CurrentOption = {Context.mode1Name},
+        MultipleOptions = false,
+        Callback = function(Options)
+            local val = type(Options) == "table" and Options[1] or Options
+            Context.mode1Name = val
+            updateAttachment()
+        end,
+    })
+    Context.DropTrenUI = OneShotTab:CreateDropdown({
+        Name = "Vị trí Trên",
+        Options = {"Dưới đất", "Lên trời", "Hủy"},
+        CurrentOption = {Context.mode2Name},
+        MultipleOptions = false,
+        Callback = function(Options)
+            local val = type(Options) == "table" and Options[1] or Options
+            Context.mode2Name = val
+            updateAttachment()
+        end,
+    })
+
+    OneShotTab:CreateSection("-Main")
+    Context.ToggleVoidUI = OneShotTab:CreateToggle({
+        Name = "Hiển thị Minigui Void",
+        CurrentValue = Context.isMiniVoidVisible,
+        Callback = function(Value)
+            Context.isMiniVoidVisible = Value
+            voidWidget.Visible = Context.isMiniVoidVisible
+        end,
+    })
+    Context.ToggleKBUI = OneShotTab:CreateToggle({
+        Name = "Hiển thị Minigui Kill Bricks",
+        CurrentValue = Context.isMiniKBVisible,
+        Callback = function(Value)
+            Context.isMiniKBVisible = Value
+            kbWidget.Visible = Context.isMiniKBVisible
+        end,
+    })
+end

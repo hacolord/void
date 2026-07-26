@@ -1,105 +1,254 @@
-return function(Window, Context)
-    local voidWidget = Context.voidWidget
-    local kbWidget = Context.kbWidget
-    local updateAttachment = Context.updateAttachment
+-- ======================================================================
+-- PHẦN 4: LOGIC ONE SHOT (NHÁNH 2)
+-- ======================================================================
 
-    local OneShotTab = Window:CreateTab("One Shot", 4483362458)
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local localPlayer = Players.LocalPlayer
 
-    OneShotTab:CreateSection("Checkers")
-    OneShotTab:CreateButton({
-        Name = "Check Void",
-        Callback = function()
-            Context.recordedVoidY = Context.trackedVoidY
-        end,
-    })
-    OneShotTab:CreateButton({
-        Name = "Check Kill Bricks",
-        Callback = function()
-            Context.killBricksList = {}
-            for _, part in ipairs(workspace:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    local name = string.lower(part.Name)
-                    local isKB = false
-                    if string.find(name, "kill") or string.find(name, "lava") or string.find(name, "damage") then isKB = true
-                    else
-                        for _, child in ipairs(part:GetChildren()) do
-                            if child:IsA("TouchTransmitter") or (child:IsA("Script") and string.find(string.lower(child.Name), "kill")) then
-                                isKB = true; break
-                            end
-                        end
-                    end
-                    if isKB then
-                        table.insert(Context.killBricksList, part)
+_G.HubState = _G.HubState or {}
+_G.HubLogic = _G.HubLogic or {}
+
+-- Khởi tạo biến trạng thái One Shot trong HubState
+_G.HubState.fullSaveFileName = "FullGui_Save.json"
+_G.HubState.isAttached = false
+_G.HubState.targetModeIndex = 3
+_G.HubState.mode1Name = "Hủy"
+_G.HubState.mode2Name = "Hủy"
+_G.HubState.studOffset = 0
+_G.HubState.attachDuration = 0
+
+_G.HubState.isMiniVoidVisible = true
+_G.HubState.isMiniKBVisible = true
+
+_G.HubState.trackedVoidY = workspace.FallenPartsDestroyHeight
+_G.HubState.recordedVoidY = _G.HubState.trackedVoidY
+_G.HubState.lastSafeY = 0
+_G.HubState.killBricksList = {}
+
+_G.HubState.originalCFrame = nil
+_G.HubState.attachTimerThread = nil
+_G.HubState.currentAnchorPart = nil
+_G.HubState.currentWeldConstraint = nil
+
+-- Hàm đồng bộ trạng thái Mini GUI nút bấm
+_G.HubLogic.SyncMiniGuiStates = function()
+    local w = _G.HubState.Widgets
+    if not w then return end
+
+    if _G.HubState.targetModeIndex == 1 and _G.HubState.isAttached then
+        w.voidBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        w.voidBtn.Text = "VOID\nON"
+        w.kbBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        w.kbBtn.Text = "KB\nOFF"
+    elseif _G.HubState.targetModeIndex == 2 and _G.HubState.isAttached then
+        w.kbBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        w.kbBtn.Text = "KB\nON"
+        w.voidBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        w.voidBtn.Text = "VOID\nOFF"
+    else
+        w.voidBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        w.voidBtn.Text = "VOID\nOFF"
+        w.kbBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        w.kbBtn.Text = "KB\nOFF"
+    end
+end
+
+-- Hàm tìm KillBrick gần nhất
+local function getNearestKillBrick()
+    local char = localPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+    local pos = char.HumanoidRootPart.Position
+    local nearest, minDistance = nil, math.huge
+    for _, kb in ipairs(_G.HubState.killBricksList) do
+        if kb and kb.Parent then
+            local dist = (kb.Position - pos).Magnitude
+            if dist < minDistance then
+                minDistance = dist
+                nearest = kb
+            end
+        end
+    end
+    return nearest
+end
+
+-- Tính toán góc xoay theo chế độ
+local function getTargetRotation()
+    local yaw, pitch = 0, 0
+    local m1 = _G.HubState.mode1Name
+    local m2 = _G.HubState.mode2Name
+
+    if m1 == "Trước" then yaw = 0 
+    elseif m1 == "Phải" then yaw = math.rad(-90) 
+    elseif m1 == "Sau" then yaw = math.rad(180) 
+    elseif m1 == "Trái" then yaw = math.rad(90) 
+    end
+
+    if m2 == "Dưới đất" then pitch = math.rad(-90) 
+    elseif m2 == "Lên trời" then pitch = math.rad(90) 
+    end
+
+    return CFrame.Angles(pitch, yaw, 0)
+end
+
+-- Hàm cập nhật Anchor vật lý (UpdateAttachment)
+_G.HubLogic.UpdateAttachment = function()
+    local char = localPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    local hrp = char.HumanoidRootPart
+
+    if _G.HubState.attachTimerThread then
+        task.cancel(_G.HubState.attachTimerThread)
+        _G.HubState.attachTimerThread = nil
+    end
+
+    if _G.HubState.isAttached and (_G.HubState.targetModeIndex == 1 or _G.HubState.targetModeIndex == 2) then
+        if _G.HubState.currentWeldConstraint then
+            _G.HubState.currentWeldConstraint:Destroy()
+            _G.HubState.currentWeldConstraint = nil
+        end
+        if _G.HubState.currentAnchorPart then
+            _G.HubState.currentAnchorPart:Destroy()
+            _G.HubState.currentAnchorPart = nil
+        end
+
+        if not _G.HubState.originalCFrame then
+            _G.HubState.originalCFrame = hrp.CFrame 
+        end
+
+        local targetPos = Vector3.new(0, 0, 0)
+        local rotCFrame = getTargetRotation()
+
+        if _G.HubState.targetModeIndex == 1 then
+            local pos = hrp.Position
+            targetPos = Vector3.new(pos.X, _G.HubState.recordedVoidY + _G.HubState.studOffset, pos.Z)
+        elseif _G.HubState.targetModeIndex == 2 then
+            local nearestKB = getNearestKillBrick()
+            if nearestKB then
+                targetPos = nearestKB.Position + Vector3.new(0, _G.HubState.studOffset, 0)
+            else
+                targetPos = hrp.Position
+            end
+        end
+
+        local anchor = Instance.new("Part")
+        anchor.Name = "OneShotPhysicalAnchor"
+        anchor.Size = Vector3.new(1, 1, 1)
+        anchor.Transparency = 1
+        anchor.CanCollide = false
+        anchor.Anchored = true
+        anchor.CFrame = CFrame.new(targetPos) * rotCFrame
+        anchor.Parent = workspace
+        _G.HubState.currentAnchorPart = anchor
+
+        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        hrp.CFrame = anchor.CFrame
+        hrp.Anchored = true
+
+        local weld = Instance.new("WeldConstraint")
+        weld.Name = "OneShotPhysicalWeld"
+        weld.Part0 = anchor
+        weld.Part1 = hrp
+        weld.Parent = anchor
+        _G.HubState.currentWeldConstraint = weld
+
+        if _G.HubState.attachDuration > 0 then
+            _G.HubState.attachTimerThread = task.delay(_G.HubState.attachDuration, function()
+                if _G.HubState.isAttached then
+                    _G.HubState.attachTimerThread = nil
+                    _G.HubState.isAttached = false
+                    _G.HubState.targetModeIndex = 3
+                    _G.HubLogic.UpdateAttachment()
+                end
+            end)
+        end
+    else
+        if _G.HubState.originalCFrame then
+            hrp.CFrame = _G.HubState.originalCFrame
+            _G.HubState.originalCFrame = nil
+        end
+
+        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        hrp.Anchored = false
+
+        if _G.HubState.currentWeldConstraint then
+            _G.HubState.currentWeldConstraint:Destroy()
+            _G.HubState.currentWeldConstraint = nil
+        end
+        if _G.HubState.currentAnchorPart then
+            _G.HubState.currentAnchorPart:Destroy()
+            _G.HubState.currentAnchorPart = nil
+        end
+    end
+    _G.HubLogic.SyncMiniGuiStates()
+end
+
+_G.HubLogic.ToggleVoid = function()
+    if _G.HubState.targetModeIndex == 1 and _G.HubState.isAttached then 
+        _G.HubState.isAttached = false
+        _G.HubState.targetModeIndex = 3
+    else 
+        _G.HubState.isAttached = true
+        _G.HubState.targetModeIndex = 1
+        if _G.HubLogic.StopFlying then _G.HubLogic.StopFlying() end
+    end
+    _G.HubLogic.UpdateAttachment()
+end
+
+_G.HubLogic.ToggleKB = function()
+    if _G.HubState.targetModeIndex == 2 and _G.HubState.isAttached then 
+        _G.HubState.isAttached = false
+        _G.HubState.targetModeIndex = 3
+    else 
+        _G.HubState.isAttached = true
+        _G.HubState.targetModeIndex = 2 
+        if _G.HubLogic.StopFlying then _G.HubLogic.StopFlying() end
+    end
+    _G.HubLogic.UpdateAttachment()
+end
+
+_G.HubLogic.CheckVoid = function()
+    _G.HubState.recordedVoidY = _G.HubState.trackedVoidY
+end
+
+_G.HubLogic.CheckKillBricks = function()
+    _G.HubState.killBricksList = {}
+    for _, part in ipairs(workspace:GetDescendants()) do
+        if part:IsA("BasePart") then
+            local name = string.lower(part.Name)
+            local isKB = false
+            if string.find(name, "kill") or string.find(name, "lava") or string.find(name, "damage") then
+                isKB = true
+            else
+                for _, child in ipairs(part:GetChildren()) do
+                    if child:IsA("TouchTransmitter") or (child:IsA("Script") and string.find(string.lower(child.Name), "kill")) then
+                        isKB = true
+                        break
                     end
                 end
             end
-        end,
-    })
-
-    Context.InputStudsUI = OneShotTab:CreateInput({
-        Name = "Khoảng cách Stud (Y Offset)",
-        PlaceholderText = "Nhập số...",
-        RemoveTextAfterFocusLost = false,
-        Callback = function(Text)
-            local val = tonumber(Text)
-            if val then
-                Context.studOffset = val
-                updateAttachment()
-            end
-        end,
-    })
-
-    Context.InputTimeUI = OneShotTab:CreateInput({
-        Name = "Thời gian Attach (giây, 0 = vĩnh viễn)",
-        PlaceholderText = "Ví dụ: 1",
-        RemoveTextAfterFocusLost = false,
-        Callback = function(Text)
-            local val = tonumber(Text)
-            if val then
-                Context.attachDuration = val
-            end
-        end,
-    })
-
-    OneShotTab:CreateSection("-Phía")
-    Context.DropNgangUI = OneShotTab:CreateDropdown({
-        Name = "Vị trí Ngang",
-        Options = {"Trước", "Phải", "Sau", "Trái", "Hủy"},
-        CurrentOption = {Context.mode1Name},
-        MultipleOptions = false,
-        Callback = function(Options)
-            local val = type(Options) == "table" and Options[1] or Options
-            Context.mode1Name = val
-            updateAttachment()
-        end,
-    })
-    Context.DropTrenUI = OneShotTab:CreateDropdown({
-        Name = "Vị trí Trên",
-        Options = {"Dưới đất", "Lên trời", "Hủy"},
-        CurrentOption = {Context.mode2Name},
-        MultipleOptions = false,
-        Callback = function(Options)
-            local val = type(Options) == "table" and Options[1] or Options
-            Context.mode2Name = val
-            updateAttachment()
-        end,
-    })
-
-    OneShotTab:CreateSection("-Main")
-    Context.ToggleVoidUI = OneShotTab:CreateToggle({
-        Name = "Hiển thị Minigui Void",
-        CurrentValue = Context.isMiniVoidVisible,
-        Callback = function(Value)
-            Context.isMiniVoidVisible = Value
-            voidWidget.Visible = Context.isMiniVoidVisible
-        end,
-    })
-    Context.ToggleKBUI = OneShotTab:CreateToggle({
-        Name = "Hiển thị Minigui Kill Bricks",
-        CurrentValue = Context.isMiniKBVisible,
-        Callback = function(Value)
-            Context.isMiniKBVisible = Value
-            kbWidget.Visible = Context.isMiniKBVisible
-        end,
-    })
+            if isKB then table.insert(_G.HubState.killBricksList, part) end
+        end
+    end
 end
+
+-- Vòng lặp theo dõi độ cao an toàn để bắt vị trí Void
+RunService.Heartbeat:Connect(function()
+    local char = localPlayer.Character
+    if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") then
+        local currentY = char.HumanoidRootPart.Position.Y
+        if char.Humanoid.Health > 0 then
+            _G.HubState.lastSafeY = currentY
+        else
+            if _G.HubState.lastSafeY < -20 then _G.HubState.trackedVoidY = _G.HubState.lastSafeY end
+        end
+    end
+end)
+
+localPlayer.CharacterAdded:Connect(function(char)
+    char:WaitForChild("HumanoidRootPart")
+    task.wait(0.5)
+    if _G.HubState.isAttached then _G.HubLogic.UpdateAttachment() end
+end)

@@ -22,7 +22,7 @@ _G.HubState.isMiniVoidVisible = true
 _G.HubState.isMiniKBVisible = true
 
 _G.HubState.trackedVoidY = workspace.FallenPartsDestroyHeight
-_G.HubState.recordedVoidY = _G.HubState.trackedVoidY
+_G.HubState.recordedVoidY = workspace.FallenPartsDestroyHeight
 _G.HubState.lastSafeY = 0
 _G.HubState.killBricksList = {}
 
@@ -30,6 +30,7 @@ _G.HubState.originalCFrame = nil
 _G.HubState.attachTimerThread = nil
 _G.HubState.currentAnchorPart = nil
 _G.HubState.currentWeldConstraint = nil
+_G.HubState.heartbeatConnection = nil
 
 -- Hàm đồng bộ trạng thái Mini GUI nút bấm
 _G.HubLogic.SyncMiniGuiStates = function()
@@ -91,6 +92,14 @@ local function getTargetRotation()
     return CFrame.Angles(pitch, yaw, 0)
 end
 
+-- Dọn dẹp kết nối duy trì vị trí
+local function stopHeartbeatLoop()
+    if _G.HubState.heartbeatConnection then
+        _G.HubState.heartbeatConnection:Disconnect()
+        _G.HubState.heartbeatConnection = nil
+    end
+end
+
 -- Hàm cập nhật Anchor vật lý (UpdateAttachment)
 _G.HubLogic.UpdateAttachment = function()
     local char = localPlayer.Character
@@ -101,6 +110,8 @@ _G.HubLogic.UpdateAttachment = function()
         task.cancel(_G.HubState.attachTimerThread)
         _G.HubState.attachTimerThread = nil
     end
+
+    stopHeartbeatLoop()
 
     if _G.HubState.isAttached and (_G.HubState.targetModeIndex == 1 or _G.HubState.targetModeIndex == 2) then
         if _G.HubState.currentWeldConstraint then
@@ -116,20 +127,7 @@ _G.HubLogic.UpdateAttachment = function()
             _G.HubState.originalCFrame = hrp.CFrame 
         end
 
-        local targetPos = Vector3.new(0, 0, 0)
         local rotCFrame = getTargetRotation()
-
-        if _G.HubState.targetModeIndex == 1 then
-            local pos = hrp.Position
-            targetPos = Vector3.new(pos.X, _G.HubState.recordedVoidY + _G.HubState.studOffset, pos.Z)
-        elseif _G.HubState.targetModeIndex == 2 then
-            local nearestKB = getNearestKillBrick()
-            if nearestKB then
-                targetPos = nearestKB.Position + Vector3.new(0, _G.HubState.studOffset, 0)
-            else
-                targetPos = hrp.Position
-            end
-        end
 
         local anchor = Instance.new("Part")
         anchor.Name = "OneShotPhysicalAnchor"
@@ -137,14 +135,8 @@ _G.HubLogic.UpdateAttachment = function()
         anchor.Transparency = 1
         anchor.CanCollide = false
         anchor.Anchored = true
-        anchor.CFrame = CFrame.new(targetPos) * rotCFrame
         anchor.Parent = workspace
         _G.HubState.currentAnchorPart = anchor
-
-        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-        hrp.CFrame = anchor.CFrame
-        hrp.Anchored = true
 
         local weld = Instance.new("WeldConstraint")
         weld.Name = "OneShotPhysicalWeld"
@@ -152,6 +144,41 @@ _G.HubLogic.UpdateAttachment = function()
         weld.Part1 = hrp
         weld.Parent = anchor
         _G.HubState.currentWeldConstraint = weld
+
+        -- Vòng lặp đè CFrame liên tục mỗi frame để chống chiêu đấm của Naoya kéo lại
+        _G.HubState.heartbeatConnection = RunService.Heartbeat:Connect(function()
+            local currentChar = localPlayer.Character
+            if not currentChar or not currentChar:FindFirstChild("HumanoidRootPart") then return end
+            local currentHrp = currentChar.HumanoidRootPart
+
+            local targetPos = Vector3.new(0, 0, 0)
+            local pos = currentHrp.Position
+
+            if _G.HubState.targetModeIndex == 1 then
+                -- Ép sâu xuống hơn ngưỡng void (thêm -15 stud) để đối phương lập tức rơi vào khu vực chết/respawn
+                local voidBaseY = _G.HubState.recordedVoidY
+                if voidBaseY >= -50 then
+                    voidBaseY = workspace.FallenPartsDestroyHeight - 15
+                end
+                targetPos = Vector3.new(pos.X, voidBaseY + _G.HubState.studOffset, pos.Z)
+            elseif _G.HubState.targetModeIndex == 2 then
+                local nearestKB = getNearestKillBrick()
+                if nearestKB then
+                    targetPos = nearestKB.Position + Vector3.new(0, _G.HubState.studOffset, 0)
+                else
+                    targetPos = pos
+                end
+            end
+
+            local finalCFrame = CFrame.new(targetPos) * rotCFrame
+            if _G.HubState.currentAnchorPart then
+                _G.HubState.currentAnchorPart.CFrame = finalCFrame
+            end
+            currentHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            currentHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            currentHrp.CFrame = finalCFrame
+            currentHrp.Anchored = true
+        end)
 
         if _G.HubState.attachDuration > 0 then
             _G.HubState.attachTimerThread = task.delay(_G.HubState.attachDuration, function()
@@ -164,6 +191,8 @@ _G.HubLogic.UpdateAttachment = function()
             end)
         end
     else
+        stopHeartbeatLoop()
+
         if _G.HubState.originalCFrame then
             hrp.CFrame = _G.HubState.originalCFrame
             _G.HubState.originalCFrame = nil
@@ -210,7 +239,12 @@ _G.HubLogic.ToggleKB = function()
 end
 
 _G.HubLogic.CheckVoid = function()
-    _G.HubState.recordedVoidY = _G.HubState.trackedVoidY
+    local char = localPlayer.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        _G.HubState.recordedVoidY = char.HumanoidRootPart.Position.Y
+    else
+        _G.HubState.recordedVoidY = workspace.FallenPartsDestroyHeight - 15
+    end
 end
 
 _G.HubLogic.CheckKillBricks = function()
@@ -234,7 +268,7 @@ _G.HubLogic.CheckKillBricks = function()
     end
 end
 
--- Vòng lặp theo dõi độ cao an toàn để bắt vị trí Void
+-- Vòng lặp theo dõi độ cao
 RunService.Heartbeat:Connect(function()
     local char = localPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") then
@@ -242,7 +276,9 @@ RunService.Heartbeat:Connect(function()
         if char.Humanoid.Health > 0 then
             _G.HubState.lastSafeY = currentY
         else
-            if _G.HubState.lastSafeY < -20 then _G.HubState.trackedVoidY = _G.HubState.lastSafeY end
+            if _G.HubState.lastSafeY < -20 then 
+                _G.HubState.trackedVoidY = _G.HubState.lastSafeY 
+            end
         end
     end
 end)

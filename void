@@ -31,15 +31,32 @@ _G.HubState.attachTimerThread = nil
 _G.HubState.currentAnchorPart = nil
 _G.HubState.currentWeldConstraint = nil
 _G.HubState.heartbeatConnection = nil
-_G.HubState.postSimConnection = nil
-_G.HubState.anchoredChangedConnections = _G.HubState.anchoredChangedConnections or {}
 
--- Hàm dọn dẹp toàn bộ kết nối lắng nghe đổi thuộc tính Anchored
-local function clearAnchoredConnections()
-    for _, conn in ipairs(_G.HubState.anchoredChangedConnections) do
-        if conn then conn:Disconnect() end
+-- Hàm kiểm tra xem nhân vật có đang trong trạng thái Ragdoll hay không
+local function isCharacterRagdolled(char)
+    if not char then return false end
+    
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        local state = humanoid:GetState()
+        if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.Physics or state == Enum.HumanoidStateType.FallingDown then
+            return true
+        end
     end
-    _G.HubState.anchoredChangedConnections = {}
+
+    -- Kiểm tra cờ / đánh dấu Ragdoll đặc trưng trong JJS
+    if char:FindFirstChild("Ragdoll") or char:FindFirstChild("ragdoll") or char:FindFirstChild("IsRagdoll") then
+        return true
+    end
+
+    -- Kiểm tra sự xuất hiện của Constraint Ragdoll trong nhân vật
+    for _, child in ipairs(char:GetDescendants()) do
+        if child:IsA("BallSocketConstraint") or (child:IsA("StringValue") or child:IsA("BoolValue")) and string.find(string.lower(child.Name), "ragdoll") then
+            return true
+        end
+    end
+
+    return false
 end
 
 -- Hàm đồng bộ trạng thái Mini GUI nút bấm
@@ -108,14 +125,9 @@ local function stopHeartbeatLoop()
         _G.HubState.heartbeatConnection:Disconnect()
         _G.HubState.heartbeatConnection = nil
     end
-    if _G.HubState.postSimConnection then
-        _G.HubState.postSimConnection:Disconnect()
-        _G.HubState.postSimConnection = nil
-    end
-    clearAnchoredConnections()
 end
 
--- Hàm cập nhật Anchor vật lý Siêu Tuyệt Đối (UpdateAttachment)
+-- Hàm cập nhật Anchor vật lý (UpdateAttachment)
 _G.HubLogic.UpdateAttachment = function()
     local char = localPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return end
@@ -160,29 +172,22 @@ _G.HubLogic.UpdateAttachment = function()
         weld.Parent = anchor
         _G.HubState.currentWeldConstraint = weld
 
-        -- Khóa Anchored cho toàn bộ Part thuộc Character để chống chia tách khung xương do skill
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.Anchored = true
-                local conn = part:GetPropertyChangedSignal("Anchored"):Connect(function()
-                    if _G.HubState.isAttached and not part.Anchored then
-                        part.Anchored = true
-                    end
-                end)
-                table.insert(_G.HubState.anchoredChangedConnections, conn)
-            end
-        end
-
-        local function applyUltraAnchorLogic()
+        -- Vòng lặp cập nhật vị trí dịch chuyển (Bỏ qua nếu đang Ragdoll)
+        _G.HubState.heartbeatConnection = RunService.Heartbeat:Connect(function()
             local currentChar = localPlayer.Character
             if not currentChar or not currentChar:FindFirstChild("HumanoidRootPart") then return end
-            local currentHrp = currentChar.HumanoidRootPart
-            local humanoid = currentChar:FindFirstChildOfClass("Humanoid")
+            
+            -- NÉ RAGDOLL: Nếu đang trong trạng thái Ragdoll thì bỏ qua không can thiệp CFrame
+            if isCharacterRagdolled(currentChar) then
+                return
+            end
 
+            local currentHrp = currentChar.HumanoidRootPart
             local targetPos = Vector3.new(0, 0, 0)
             local pos = currentHrp.Position
 
             if _G.HubState.targetModeIndex == 1 then
+                -- Ép sâu xuống hơn ngưỡng void (thêm -15 stud) để đối phương lập tức rơi vào khu vực chết/respawn
                 local voidBaseY = _G.HubState.recordedVoidY
                 if voidBaseY >= -50 then
                     voidBaseY = workspace.FallenPartsDestroyHeight - 15
@@ -202,33 +207,11 @@ _G.HubLogic.UpdateAttachment = function()
                 _G.HubState.currentAnchorPart.CFrame = finalCFrame
             end
 
-            -- Ép vị trí và vây bắt toàn bộ vật lý bất thường từ Animation/Skill
-            for _, item in ipairs(currentChar:GetDescendants()) do
-                if item:IsA("BasePart") then
-                    item.AssemblyLinearVelocity = Vector3.zero
-                    item.AssemblyAngularVelocity = Vector3.zero
-                    item.Anchored = true
-                elseif item:IsA("BodyMover") or item:IsA("Constraint") then
-                    if item:IsA("BodyVelocity") or item:IsA("BodyPosition") or item:IsA("BodyGyro") or item:IsA("LinearVelocity") or item:IsA("VectorForce") then
-                        item:Destroy()
-                    end
-                end
-            end
-
+            currentHrp.AssemblyLinearVelocity = Vector3.zero
+            currentHrp.AssemblyAngularVelocity = Vector3.zero
             currentHrp.CFrame = finalCFrame
-
-            -- Chống đổi state văng ngã của Humanoid khi bay nhảy
-            if humanoid then
-                humanoid:ChangeState(Enum.HumanoidStateType.None)
-            end
-        end
-
-        -- Khóa 2 tầng Render: Trước khi tính toán Physics (PreRender) và Sau khi Simulation xong (PostSimulation)
-        local preRenderEvent = RunService:IsStudio() and RunService.Heartbeat or (RunService.PreRender or RunService.RenderStepped)
-        local postSimEvent = RunService.PostSimulation or RunService.Heartbeat
-
-        _G.HubState.heartbeatConnection = preRenderEvent:Connect(applyUltraAnchorLogic)
-        _G.HubState.postSimConnection = postSimEvent:Connect(applyUltraAnchorLogic)
+            currentHrp.Anchored = true
+        end)
 
         if _G.HubState.attachDuration > 0 then
             _G.HubState.attachTimerThread = task.delay(_G.HubState.attachDuration, function()
@@ -248,13 +231,9 @@ _G.HubLogic.UpdateAttachment = function()
             _G.HubState.originalCFrame = nil
         end
 
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.AssemblyLinearVelocity = Vector3.zero
-                part.AssemblyAngularVelocity = Vector3.zero
-                part.Anchored = false
-            end
-        end
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.Anchored = false
 
         if _G.HubState.currentWeldConstraint then
             _G.HubState.currentWeldConstraint:Destroy()

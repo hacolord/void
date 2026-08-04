@@ -32,7 +32,7 @@ _G.HubState.currentAnchorPart = nil
 _G.HubState.currentWeldConstraint = nil
 _G.HubState.heartbeatConnection = nil
 
--- Hàm kiểm tra xem nhân vật có đang trong trạng thái Ragdoll hay không
+-- Hàm kiểm tra chính xác trạng thái Ragdoll thực tế của Humanoid (Tránh kẹt rác Object)
 local function isCharacterRagdolled(char)
     if not char then return false end
     
@@ -40,18 +40,6 @@ local function isCharacterRagdolled(char)
     if humanoid then
         local state = humanoid:GetState()
         if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.Physics or state == Enum.HumanoidStateType.FallingDown then
-            return true
-        end
-    end
-
-    -- Kiểm tra cờ / đánh dấu Ragdoll đặc trưng trong JJS
-    if char:FindFirstChild("Ragdoll") or char:FindFirstChild("ragdoll") or char:FindFirstChild("IsRagdoll") then
-        return true
-    end
-
-    -- Kiểm tra sự xuất hiện của Constraint Ragdoll trong nhân vật
-    for _, child in ipairs(char:GetDescendants()) do
-        if child:IsA("BallSocketConstraint") or (child:IsA("StringValue") or child:IsA("BoolValue")) and string.find(string.lower(child.Name), "ragdoll") then
             return true
         end
     end
@@ -172,12 +160,12 @@ _G.HubLogic.UpdateAttachment = function()
         weld.Parent = anchor
         _G.HubState.currentWeldConstraint = weld
 
-        -- Vòng lặp cập nhật vị trí dịch chuyển (Bỏ qua nếu đang Ragdoll)
+        -- Vòng lặp cập nhật vị trí dịch chuyển (Tự động hồi phục khi hết Ragdoll)
         _G.HubState.heartbeatConnection = RunService.Heartbeat:Connect(function()
             local currentChar = localPlayer.Character
             if not currentChar or not currentChar:FindFirstChild("HumanoidRootPart") then return end
             
-            -- NÉ RAGDOLL: Nếu đang trong trạng thái Ragdoll thì bỏ qua không can thiệp CFrame
+            -- Né Ragdoll tạm thời, ngay khi hết Ragdoll câu lệnh này sẽ trả về false và chạy xuống dưới tiếp tục Void
             if isCharacterRagdolled(currentChar) then
                 return
             end

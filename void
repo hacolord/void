@@ -32,20 +32,31 @@ _G.HubState.currentAnchorPart = nil
 _G.HubState.currentWeldConstraint = nil
 _G.HubState.heartbeatConnection = nil
 
--- Hàm kiểm tra chính xác trạng thái Ragdoll thực tế của Humanoid (Tránh kẹt rác Object)
-local function isCharacterRagdolled(char)
-    if not char then return false end
+-- Hàm Anti-Void Dead State Blocker
+local function blockVoidDeath(character)
+    local humanoid = character:WaitForChild("Humanoid", 10)
     
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
     if humanoid then
-        local state = humanoid:GetState()
-        if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.Physics or state == Enum.HumanoidStateType.FallingDown then
-            return true
-        end
+        -- Chặn triệt để trạng thái Dead của Humanoid
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+        
+        -- Không cho tự rã khớp xương khi 'chết'
+        humanoid.BreakJointsOnDeath = false
+        
+        -- Hạ mức FallenPartsDestroyHeight phía Local
+        pcall(function()
+            workspace.FallenPartsDestroyHeight = -99999999
+        end)
     end
-
-    return false
 end
+
+-- Áp dụng cho nhân vật hiện tại
+if localPlayer.Character then
+    blockVoidDeath(localPlayer.Character)
+end
+
+-- Áp dụng mỗi khi Respawn
+localPlayer.CharacterAdded:Connect(blockVoidDeath)
 
 -- Hàm đồng bộ trạng thái Mini GUI nút bấm
 _G.HubLogic.SyncMiniGuiStates = function()
@@ -115,7 +126,7 @@ local function stopHeartbeatLoop()
     end
 end
 
--- Hàm cập nhật Anchor vật lý (UpdateAttachment)
+-- Hàm cập nhật Anchor vật lý cơ bản (UpdateAttachment)
 _G.HubLogic.UpdateAttachment = function()
     local char = localPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return end
@@ -160,22 +171,17 @@ _G.HubLogic.UpdateAttachment = function()
         weld.Parent = anchor
         _G.HubState.currentWeldConstraint = weld
 
-        -- Vòng lặp cập nhật vị trí dịch chuyển (Tự động hồi phục khi hết Ragdoll)
+        -- Vòng lặp cập nhật vị trí dịch chuyển (Giữ Anchor cơ bản tại HRP)
         _G.HubState.heartbeatConnection = RunService.Heartbeat:Connect(function()
             local currentChar = localPlayer.Character
             if not currentChar or not currentChar:FindFirstChild("HumanoidRootPart") then return end
-            
-            -- Né Ragdoll tạm thời, ngay khi hết Ragdoll câu lệnh này sẽ trả về false và chạy xuống dưới tiếp tục Void
-            if isCharacterRagdolled(currentChar) then
-                return
-            end
 
             local currentHrp = currentChar.HumanoidRootPart
             local targetPos = Vector3.new(0, 0, 0)
             local pos = currentHrp.Position
 
             if _G.HubState.targetModeIndex == 1 then
-                -- Ép sâu xuống hơn ngưỡng void (thêm -15 stud) để đối phương lập tức rơi vào khu vực chết/respawn
+                -- Ép sâu xuống hơn ngưỡng void (thêm -15 stud)
                 local voidBaseY = _G.HubState.recordedVoidY
                 if voidBaseY >= -50 then
                     voidBaseY = workspace.FallenPartsDestroyHeight - 15

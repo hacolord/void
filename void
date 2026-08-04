@@ -31,6 +31,7 @@ _G.HubState.attachTimerThread = nil
 _G.HubState.currentAnchorPart = nil
 _G.HubState.currentWeldConstraint = nil
 _G.HubState.heartbeatConnection = nil
+_G.HubState.anchoredChangedConnection = nil
 
 -- Hàm đồng bộ trạng thái Mini GUI nút bấm
 _G.HubLogic.SyncMiniGuiStates = function()
@@ -98,6 +99,10 @@ local function stopHeartbeatLoop()
         _G.HubState.heartbeatConnection:Disconnect()
         _G.HubState.heartbeatConnection = nil
     end
+    if _G.HubState.anchoredChangedConnection then
+        _G.HubState.anchoredChangedConnection:Disconnect()
+        _G.HubState.anchoredChangedConnection = nil
+    end
 end
 
 -- Hàm cập nhật Anchor vật lý (UpdateAttachment)
@@ -145,8 +150,16 @@ _G.HubLogic.UpdateAttachment = function()
         weld.Parent = anchor
         _G.HubState.currentWeldConstraint = weld
 
-        -- Vòng lặp đè CFrame liên tục mỗi frame để chống chiêu đấm của Naoya kéo lại
-        _G.HubState.heartbeatConnection = RunService.Heartbeat:Connect(function()
+        -- Chống Animation đổi thuộc tính Anchored bằng cách lắng nghe sự kiện thay đổi
+        _G.HubState.anchoredChangedConnection = hrp:GetPropertyChangedSignal("Anchored"):Connect(function()
+            if _G.HubState.isAttached and not hrp.Anchored then
+                hrp.Anchored = true
+            end
+        end)
+
+        -- Dùng PreRender để đè CFrame & Anchor trước khi Animation được cập nhật trên client
+        local renderSteppedEvent = RunService:IsStudio() and RunService.Heartbeat or (RunService.PreRender or RunService.RenderStepped)
+        _G.HubState.heartbeatConnection = renderSteppedEvent:Connect(function()
             local currentChar = localPlayer.Character
             if not currentChar or not currentChar:FindFirstChild("HumanoidRootPart") then return end
             local currentHrp = currentChar.HumanoidRootPart

@@ -1,15 +1,7 @@
 -- ======================================================================
--- PHẦN 4: LOGIC ONE SHOT (NHÁNH 2)
+-- PHẦN 4: LOGIC ONE SHOT (NHÁNH 2) - CẬP NHẬT LOGIC VOID DỊCH CHUYỂN CẢ CƠ THỂ
 -- ======================================================================
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local localPlayer = Players.LocalPlayer
-
-_G.HubState = _G.HubState or {}
-_G.HubLogic = _G.HubLogic or {}
-
--- Khởi tạo biến trạng thái One Shot trong HubState
 _G.HubState.fullSaveFileName = "FullGui_Save.json"
 _G.HubState.isAttached = false
 _G.HubState.targetModeIndex = 3
@@ -32,33 +24,24 @@ _G.HubState.currentAnchorPart = nil
 _G.HubState.currentWeldConstraint = nil
 _G.HubState.heartbeatConnection = nil
 
--- Hàm Anti-Void Dead State Blocker
 local function blockVoidDeath(character)
     local humanoid = character:WaitForChild("Humanoid", 10)
     
     if humanoid then
-        -- Chặn triệt để trạng thái Dead của Humanoid
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-        
-        -- Không cho tự rã khớp xương khi 'chết'
         humanoid.BreakJointsOnDeath = false
-        
-        -- Hạ mức FallenPartsDestroyHeight phía Local
         pcall(function()
             workspace.FallenPartsDestroyHeight = -99999999
         end)
     end
 end
 
--- Áp dụng cho nhân vật hiện tại
 if localPlayer.Character then
     blockVoidDeath(localPlayer.Character)
 end
 
--- Áp dụng mỗi khi Respawn
 localPlayer.CharacterAdded:Connect(blockVoidDeath)
 
--- Hàm đồng bộ trạng thái Mini GUI nút bấm
 _G.HubLogic.SyncMiniGuiStates = function()
     local w = _G.HubState.Widgets
     if not w then return end
@@ -81,7 +64,6 @@ _G.HubLogic.SyncMiniGuiStates = function()
     end
 end
 
--- Hàm tìm KillBrick gần nhất
 local function getNearestKillBrick()
     local char = localPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
@@ -99,7 +81,6 @@ local function getNearestKillBrick()
     return nearest
 end
 
--- Tính toán góc xoay theo chế độ
 local function getTargetRotation()
     local yaw, pitch = 0, 0
     local m1 = _G.HubState.mode1Name
@@ -118,7 +99,6 @@ local function getTargetRotation()
     return CFrame.Angles(pitch, yaw, 0)
 end
 
--- Dọn dẹp kết nối duy trì vị trí
 local function stopHeartbeatLoop()
     if _G.HubState.heartbeatConnection then
         _G.HubState.heartbeatConnection:Disconnect()
@@ -126,7 +106,7 @@ local function stopHeartbeatLoop()
     end
 end
 
--- Hàm cập nhật Anchor vật lý cơ bản (UpdateAttachment)
+-- Cập nhật logic dịch chuyển CẢ CƠ THỂ sang Void hỗ trợ Model custom
 _G.HubLogic.UpdateAttachment = function()
     local char = localPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return end
@@ -150,7 +130,7 @@ _G.HubLogic.UpdateAttachment = function()
         end
 
         if not _G.HubState.originalCFrame then
-            _G.HubState.originalCFrame = hrp.CFrame 
+            _G.HubState.originalCFrame = char:GetPivot()
         end
 
         local rotCFrame = getTargetRotation()
@@ -171,8 +151,7 @@ _G.HubLogic.UpdateAttachment = function()
         weld.Parent = anchor
         _G.HubState.currentWeldConstraint = weld
 
-        -- Vòng lặp cập nhật vị trí dịch chuyển (Giữ Anchor cơ bản tại HRP)
-        _G.HubState.heartbeatConnection = RunService.Heartbeat:Connect(function()
+        _G.HubState.heartbeatConnection = game:GetService("RunService").Heartbeat:Connect(function()
             local currentChar = localPlayer.Character
             if not currentChar or not currentChar:FindFirstChild("HumanoidRootPart") then return end
 
@@ -181,7 +160,6 @@ _G.HubLogic.UpdateAttachment = function()
             local pos = currentHrp.Position
 
             if _G.HubState.targetModeIndex == 1 then
-                -- Ép sâu xuống hơn ngưỡng void (thêm -15 stud)
                 local voidBaseY = _G.HubState.recordedVoidY
                 if voidBaseY >= -50 then
                     voidBaseY = workspace.FallenPartsDestroyHeight - 15
@@ -201,10 +179,15 @@ _G.HubLogic.UpdateAttachment = function()
                 _G.HubState.currentAnchorPart.CFrame = finalCFrame
             end
 
-            currentHrp.AssemblyLinearVelocity = Vector3.zero
-            currentHrp.AssemblyAngularVelocity = Vector3.zero
-            currentHrp.CFrame = finalCFrame
-            currentHrp.Anchored = true
+            -- Dịch chuyển toàn bộ Character Model (Tất cả bộ phận, tay, chân, đầu)
+            currentChar:PivotTo(finalCFrame)
+
+            for _, part in ipairs(currentChar:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
         end)
 
         if _G.HubState.attachDuration > 0 then
@@ -221,13 +204,17 @@ _G.HubLogic.UpdateAttachment = function()
         stopHeartbeatLoop()
 
         if _G.HubState.originalCFrame then
-            hrp.CFrame = _G.HubState.originalCFrame
+            char:PivotTo(_G.HubState.originalCFrame)
             _G.HubState.originalCFrame = nil
         end
 
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        hrp.Anchored = false
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.AssemblyLinearVelocity = Vector3.zero
+                part.AssemblyAngularVelocity = Vector3.zero
+                part.Anchored = false
+            end
+        end
 
         if _G.HubState.currentWeldConstraint then
             _G.HubState.currentWeldConstraint:Destroy()
@@ -295,8 +282,7 @@ _G.HubLogic.CheckKillBricks = function()
     end
 end
 
--- Vòng lặp theo dõi độ cao
-RunService.Heartbeat:Connect(function()
+game:GetService("RunService").Heartbeat:Connect(function()
     local char = localPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") then
         local currentY = char.HumanoidRootPart.Position.Y

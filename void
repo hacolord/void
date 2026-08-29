@@ -2,6 +2,12 @@
 -- PHẦN 4: LOGIC ONE SHOT (NHÁNH 2) - CẬP NHẬT LOGIC VOID DỊCH CHUYỂN CẢ CƠ THỂ
 -- ======================================================================
 
+local Players = game:GetService("Players")
+local localPlayer = Players.LocalPlayer or Players.LocalPlayer:GetPropertyChangedSignal("LocalPlayer"):Wait()
+
+if not _G.HubState then _G.HubState = {} end
+if not _G.HubLogic then _G.HubLogic = {} end
+
 _G.HubState.fullSaveFileName = "FullGui_Save.json"
 _G.HubState.isAttached = false
 _G.HubState.targetModeIndex = 3

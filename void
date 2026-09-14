@@ -30,15 +30,35 @@ _G.HubState.currentAnchorPart = nil
 _G.HubState.currentWeldConstraint = nil
 _G.HubState.heartbeatConnection = nil
 
+-- Trạng thái Anti Void (Mặc định bật)
+_G.HubState.isAntiVoidEnabled = _G.HubState.isAntiVoidEnabled ~= nil and _G.HubState.isAntiVoidEnabled or true
+_G.HubState.originalFallenHeight = _G.HubState.originalFallenHeight or workspace.FallenPartsDestroyHeight
+
 local function blockVoidDeath(character)
     local humanoid = character:WaitForChild("Humanoid", 10)
     
     if humanoid then
-        humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-        humanoid.BreakJointsOnDeath = false
-        pcall(function()
-            workspace.FallenPartsDestroyHeight = -99999999
-        end)
+        if _G.HubState.isAntiVoidEnabled then
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+            humanoid.BreakJointsOnDeath = false
+            pcall(function()
+                workspace.FallenPartsDestroyHeight = -99999999
+            end)
+        else
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, true)
+            humanoid.BreakJointsOnDeath = true
+            pcall(function()
+                workspace.FallenPartsDestroyHeight = _G.HubState.originalFallenHeight or -500
+            end)
+        end
+    end
+end
+
+_G.HubLogic.ToggleAntiVoid = function(enabled)
+    _G.HubState.isAntiVoidEnabled = enabled
+    local char = localPlayer.Character
+    if char then
+        blockVoidDeath(char)
     end
 end
 

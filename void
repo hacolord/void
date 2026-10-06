@@ -186,7 +186,7 @@ _G.HubLogic.UpdateAttachment = function()
             local pos = currentHrp.Position
 
             if _G.HubState.targetModeIndex == 1 then
-                targetPos = Vector3.new(pos.X, _G.HubState.recordedVoidY, pos.Z)
+                targetPos = Vector3.new(pos.X, _G.HubState.recordedVoidY + _G.HubState.studOffset, pos.Z)
             elseif _G.HubState.targetModeIndex == 2 then
                 local nearestKB = getNearestKillBrick()
                 if nearestKB then

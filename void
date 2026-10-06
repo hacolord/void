@@ -186,11 +186,7 @@ _G.HubLogic.UpdateAttachment = function()
             local pos = currentHrp.Position
 
             if _G.HubState.targetModeIndex == 1 then
-                local voidBaseY = _G.HubState.recordedVoidY
-                if voidBaseY >= -50 then
-                    voidBaseY = workspace.FallenPartsDestroyHeight - 15
-                end
-                targetPos = Vector3.new(pos.X, voidBaseY + _G.HubState.studOffset, pos.Z)
+                targetPos = Vector3.new(pos.X, _G.HubState.recordedVoidY, pos.Z)
             elseif _G.HubState.targetModeIndex == 2 then
                 local nearestKB = getNearestKillBrick()
                 if nearestKB then
